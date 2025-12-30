@@ -5,6 +5,7 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
+  workflow_dispatch: # Manuel başlatma butonu ekler
 
 jobs:
   build:
@@ -16,48 +17,56 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # --- WINDOWS BAĞIMLILIKLARI ---
+    # --- 1. WINDOWS BAĞIMLILIKLARI (vcpkg) ---
     - if: startsWith(matrix.os, 'windows')
       name: Install Dependencies (Windows)
       run: |
         vcpkg install glfw3:x64-windows freetype:x64-windows capstone:x64-windows zstd:x64-windows
 
-    # --- MACOS BAĞIMLILIKLARI ---
+    # --- 2. MACOS BAĞIMLILIKLARI (Homebrew) ---
     - if: startsWith(matrix.os, 'macos')
       name: Install Dependencies (macOS)
       run: brew install pkg-config glfw freetype capstone zstd meson
 
-    # --- DERLEME (PROFILER GUI) ---
+    # --- 3. PROFILER GUI DERLEME (Hatanın Çözüldüğü Yer) ---
     - name: Build Profiler GUI
       run: |
         if ("${{ matrix.os }}" -eq "windows-latest") {
-          cmake -B profiler/build -S profiler -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          # C++17 zorlaması ve vcpkg entegrasyonu
+          cmake -B profiler/build -S profiler `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_CXX_STANDARD=17 `
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build profiler/build --parallel --config Release
         } else {
-          cmake -B profiler/build -S profiler -DCMAKE_BUILD_TYPE=Release
+          cmake -B profiler/build -S profiler -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON
+          cmake --build profiler/build --parallel
         }
-        cmake --build profiler/build --parallel --config Release
 
-    # --- DİĞER ARAÇLARIN DERLENMESİ ---
-    # Not: Hızlı olması için sadece profiler'ı bırakabilirsin ama diğerleri de lazım dersen devam:
-    - name: Build Utilities
+    # --- 4. DİĞER YARDIMCI ARAÇLAR (Opsiyonel) ---
+    - name: Build Capture Utility
       run: |
-        cmake -B capture/build -S capture -DCMAKE_BUILD_TYPE=Release
+        cmake -B capture/build -S capture -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD=17
         cmake --build capture/build --parallel --config Release
 
-    # --- ARTIFACTS TOPLAMA (EXE'LERİ AYIKLAMA) ---
+    # --- 5. EXE DOSYALARINI TOPLAMA VE PAKETLEME ---
     - name: Organize Artifacts
       shell: bash
       run: |
         mkdir -p bin
         if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          # Windows çıktılarını kopyala
           cp profiler/build/Release/*.exe bin/ 2>/dev/null || cp profiler/build/*.exe bin/
           cp capture/build/Release/*.exe bin/ 2>/dev/null || cp capture/build/*.exe bin/
         else
+          # macOS çıktılarını kopyala
           cp profiler/build/tracy-profiler bin/ 2>/dev/null || true
           cp capture/build/tracy-capture bin/ 2>/dev/null || true
         fi
 
-    - name: Upload Result
+    # --- 6. SONUCU YÜKLE (İndirilebilir hale getir) ---
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: Tracy-${{ matrix.os }}
